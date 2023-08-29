@@ -24,7 +24,7 @@ This document provides the code to run the analysis for the manuscript Estimatin
   - Run `urThreshold.R` to create the yearly-regional-urban/rural proportions using the yearly-regional proportions and the urban/rural fractions as described by [Wu and Wakefield](https://arxiv.org/abs/2209.10619) 
 3. Run `dataExploration.R` to generate plots of the cluster locations and population proportions
 4. Generate estimates:
-  - Run `summerEstimates.R` to generate and save the direct and Fay-Heriot estimates for Kenyan U5MR
+  - Run `summerEstimates.R` to generate and save the direct and Fay-Herriot estimates for Kenyan U5MR
   - Run `apcEsimates.R` to generate and save the Age-Period, Age-Cohort and Age-Period-Cohort subnational model estimates
   - Run `crossValidation.R` to perform the cross-validation for the Age-Period, Age-Cohort, and Age-Period-Cohort models
 5. Run `comparisonPlots.R` to make any plots and tables seen in the manuscript and supplementary material
