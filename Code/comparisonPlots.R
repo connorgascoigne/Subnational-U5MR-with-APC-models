@@ -236,11 +236,43 @@ apc.adm1.u5.parameters <-
   dplyr::bind_rows(apc.adm1.u5.fit$fit$summary.fixed[,c(3:5)], 
                    apc.adm1.u5.fit$fit$summary.hyperpar[,c(3:5)])
 
+all.adm1.u5.parameters <-
+  data.frame(parameter = 
+               c('age_id', 'period_id', 'cohort_id', 
+                 'strata_idrural', 'strata_idurban',
+                 'overdispersion for the betabinomial observations',
+                 'Precision for age2_id', 'Precision for period2_id', 'Precision for cohort2_id', 
+                 'Precision for space_id', 'Phi for space_id', 
+                 'Precision for spaceTime_id'),
+             parameterLabel = 
+               c('Age slope', 'Period slope', 'Cohort slope', 
+                 'Rural intercept', 'Urban intercept', 
+                 'Betabinomial overdispersion',
+                 'Age precision', 'Period precision', 'Cohort precision', 
+                 'Region precision', 'Region mixing', 
+                 'Space-period precision')) %>% 
+  dplyr::left_join(., 
+                   ap.adm1.u5.parameters %>% tibble::rownames_to_column(., var = 'parameter'),
+                   by = 'parameter') %>% 
+  dplyr::left_join(., 
+                   ac.adm1.u5.parameters %>% tibble::rownames_to_column(., var = 'parameter'),
+                   by = 'parameter') %>% 
+  dplyr::left_join(., 
+                   apc.adm1.u5.parameters %>% tibble::rownames_to_column(., var = 'parameter'),
+                   by = 'parameter')
 
-print(xtable::xtable(ap.adm1.u5.parameters, digits = 1))
-print(xtable::xtable(ac.adm1.u5.parameters, digits = 1))
-print(xtable::xtable(apc.adm1.u5.parameters, digits = 1))
+print(xtable::xtable(all.adm1.u5.parameters %>% dplyr::select(-parameter), digits = 2), include.rownames=FALSE)
 
+options(scipen = 2)
+print(xtable::xtable((all.adm1.u5.parameters %>%
+                        dplyr::filter(parameterLabel == 'Betabinomial overdispersion') %>%
+                        dplyr::select(-parameter, -parameterLabel))*100000 %>% 
+                       round(., digits = 2)))
+
+
+print(xtable::xtable(ap.adm1.u5.parameters, digits = 2))
+print(xtable::xtable(ac.adm1.u5.parameters, digits = 2))
+print(xtable::xtable(apc.adm1.u5.parameters, digits = 2))
 
 ### apc subnational maps ------------------------------------------------------
 
@@ -464,7 +496,6 @@ adm1.cv <-
   dplyr::mutate(type = type %>% factor(., levels = c('Age-Period', 'Age-Cohort', 'Age-Period-Cohort')))
 
 ## scores table -----------------------------------------------
-
 
 setwd(res.dir)
 
