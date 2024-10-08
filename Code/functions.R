@@ -1,5 +1,45 @@
+# precision matric for ICAR
+precision.icar <- function(amat){
+  
+  # structured
+  Q <- amat
+  
+  # organise amat into ICAR precision
+  if (sum(Q > 0 & Q < 1) != 0) {
+    #### if 0 < Q_{ij} < 1 then make Q_{ij} = 1
+    for (i in 1:nrow(Q)) {
+      idx <- which(Q[i, ] > 0 & Q[i, ] < 1)
+      Q[i, idx] <- 1
+    }
+  }
+  
+  # turn amat into an ICAR precision
+  ## no 0s on diagonal
+  ## main diagonal to be the number of neighbours in total
+  ## off diagonal to be 0 for not neighbours and -1 for neighbours
+  diag(Q) <- 0
+  diag <- apply(Q, 1, sum)
+  Q[Q != 0] <- -1
+  diag(Q) <- diag
+  
+  # scale and set constraints
+  
+  ## inla functions
+  inla.scale.model.bym <- utils::getFromNamespace('inla.scale.model.bym', 'INLA')
+  inla.bym.constr.internal <- utils::getFromNamespace('inla.bym.constr.internal', 'INLA')
+  
+  ## scale
+  Q <- inla.scale.model.bym(Q, adjust.for.con.comp = TRUE)
+  
+  ## set constraints
+  Q.constr <- inla.bym.constr.internal(Q, adjust.for.con.comp = TRUE)
+  
+  return(Q)
+  
+}
+
 # APC model
-smoothAPC <- function(data, admin.level, Amat = NULL, 
+smoothAPC_new <- function(data, admin.level, Amat = NULL, 
                       age.group = c("0", "1-11", "12-23", "24-35", "36-47", "48-59"), 
                       year.label, stratified = FALSE, 
                       mod = c('apc', 'ac', 'ap', 'pc', 'a', 'p', 'c')[1], slope.drop = NULL, 
@@ -10,6 +50,8 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
                       control.inla = list(strategy = 'adaptive', int.strategy = 'auto'),
                       inla.mode = c('classic', 'twostage', 'experimental')[3],
                       control.compute = list(config = TRUE), verbose = FALSE, ...){
+  
+  # inputs (for testing) ----
   
   # data = births.2014
   # admin.level = 'Admin1'
@@ -34,7 +76,7 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
   # control.compute = list(config = TRUE)
   # verbose = FALSE
   
-  ## check inputs ----
+  # check inputs ----
   
   if(!(admin.level %in% c('National','Admin1','Admin2'))){
     stop('Enter a valid admin level (National, Admin1, or Admin2)')
@@ -68,7 +110,7 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
     is.spatial <- FALSE
   }
   
-  ## set admin-level parameters ----
+  # set admin-level parameters ----
   
   if(admin.level == 'National'){
     data$region <- "All"
@@ -78,8 +120,11 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
     data$region <- data$admin2.char
   }
   
-  ## correct space & time identifiers ----
-  ### age + period + cohort
+  # data oragnisation ----
+  
+  ## correct temporal specification ----
+  
+  # age + period + cohort
   data2a <- 
     expand.grid(ageMonth = 0:59,
                 periodMonth = (12*(year.label[1] - 1900) + 1):(12*(year.label[length(year.label)] - 1900) + 12)) %>% 
@@ -100,9 +145,14 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
   A <- data2a$age %>% unique() %>% length()
   P<- data2a$period %>% unique() %>% length()
   C <- data2a$cohort %>% unique() %>% length()
-  ### space 
+  
+  ## correct spatial specification ----
+  
   R <- nrow(Amat)
   data2b <- data.frame(space = rownames(Amat), space_id = 1:R)
+  
+  ## correct spatio-temporal specification ----
+  
   ### space + age + period + cohort
   data2c <- 
     dplyr::cross_join(data2a, data2b) %>% 
@@ -110,7 +160,8 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
                   spaceTime_id = interaction(space_id, period_id) %>% as.numeric()) %>% 
     dplyr::relocate(c('space', 'spaceTime'), .before = age_id)
   
-  ## organise data ----
+  ## finalised data ----
+  
   data3 <- 
     data  %>%
     # labels for INLA modelling
@@ -135,36 +186,7 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
       period2_id = period_id, 
       cohort2_id = cohort_id)
   
-  # define the formula for INLA
-  if(is.spatial){
-    
-    # precision matrices
-    ## time
-    ### unstructured
-    Q_timeUnstruc <- diag(P)
-    ### structured
-    Q_timeStruc <- INLA:::inla.rw(n = P, order = 2, scale.model = TRUE, sparse = TRUE)
-    ## space
-    ### unstructured
-    Q_spaceUnstruc <- diag(R)
-    ### structured
-    Q_spaceStruc <- Amat
-    #### organise Amat into ICAR precision
-    if (sum(Q_spaceStruc > 0 & Q_spaceStruc < 1) != 0) {
-      #### if 0 < Q_{ij} < 1 then make Q_{ij} = 1
-      for (i in 1:nrow(Q_spaceStruc)) {
-        idx <- which(Q_spaceStruc[i, ] > 0 & Q_spaceStruc[i, ] < 1)
-        Q_spaceStruc[i, idx] <- 1
-      }
-    }
-    #### turn Amat into an ICAR precision
-    ##### no 0s on diagonal; main diag to be the number of neighbours in total; off diagonal to be 0 for not neighbours and -1 for neighbours
-    diag(Q_spaceStruc) <- 0
-    diag <- apply(Q_spaceStruc, 1, sum)
-    Q_spaceStruc[Q_spaceStruc != 0] <- -1
-    diag(Q_spaceStruc) <- diag
-    Q_spaceStruc <- INLA:::inla.scale.model(Q_spaceStruc, list(A = matrix(1, 1, dim(Q_spaceStruc)[1]), e = 0))
-  }
+  # priors ----
   
   # pc hyper priors
   ## temproal
@@ -176,13 +198,36 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
   pc.st.alpha <- ifelse(is.na(pc.st.alpha), pc.alpha, pc.st.alpha)
   hyper_pc_spaceTime <- list(prec = list(prior = "pc.prec", param = c(pc.st.u, pc.st.alpha)))
   
+  # formula ----
+  
+  ## temporal (APC) ----
+  
+  ### temporal constraints ----
+  
+  # age
+  age.values <- data3$age_id %>% unique() %>% sort()
+  age.rank.def <- 2
+  age.cMat <- rbind(1, age.values) 
+  age.e <- rep(0, times = age.rank.def)
+  # period
+  per.values <- data3$period_id %>% unique() %>% sort()
+  per.rank.def <- 2
+  per.cMat <- rbind(1, per.values) 
+  per.e <- rep(0, times = per.rank.def)
+  # cohort
+  coh.values <- data3$cohort_id %>% unique() %>% sort()
+  coh.rank.def <- 2
+  coh.cMat <- rbind(1, coh.values) 
+  coh.e <- rep(0, times = coh.rank.def)
+  
+  ### APC selection
+  
   # full temporal formula
   formula <- 
-    Y ~ 
-    age_id + period_id + cohort_id +
-    f(age2_id, model = 'rw2', hyper = hyper_pc_time, constr = TRUE, rankdef = 2, scale.model = TRUE, values = c(0, 6, 17.5, 29.5, 41.5, 53.5)) +
-    f(period2_id, model = 'rw2', hyper = hyper_pc_time, constr = TRUE, rankdef = 2, scale.model = TRUE, values = 1:P) +
-    f(cohort2_id, model = 'rw2', hyper = hyper_pc_time, constr = TRUE, rankdef = 2, scale.model = TRUE, values = 1:C)
+    Y ~ age_id + period_id + cohort_id +
+    f(age2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = age.rank.def, extraconstr = list(A = age.cMat, e = age.e, values = age.values)) +
+    f(period2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = per.rank.def, extraconstr = list(A = per.cMat, e = per.e, values = per.values)) +
+    f(cohort2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = coh.rank.def, extraconstr = list(A = coh.cMat, e = coh.e, values = coh.values))
   
   message("----------------------------------",
           "\nModel Specification", 
@@ -204,82 +249,106 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
     }
   } else if (mod == 'ac'){
     formula <- update(formula, ~.
-                      - period_id - 
-                        f(period2_id, model = 'rw2', hyper = hyper_pc_time, constr = TRUE, rankdef = 2, scale.model = TRUE, values = 1:P))
+                      - period_id 
+                      - f(period2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = per.rank.def, extraconstr = list(A = per.cMat, e = per.e, values = per.values)))
   } else if (mod == 'pc'){
     formula <- update(formula, ~.
-                      - age_id - 
-                        f(age2_id, model = 'rw2', hyper = hyper_pc_time, constr = TRUE, rankdef = 2, scale.model = TRUE, values = c(0, 6, 17.5, 29.5, 41.5, 53.5)))
+                      - age_id 
+                      - f(age2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = age.rank.def, extraconstr = list(A = age.cMat, e = age.e, values = age.values)))
   } else if (mod == 'ap'){
     formula <- update(formula, ~.
-                      - cohort_id - 
-                        f(cohort2_id, model = 'rw2', hyper = hyper_pc_time, constr = TRUE, rankdef = 2, scale.model = TRUE, values = 1:C))
+                      - cohort_id 
+                      -  f(cohort2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = coh.rank.def, extraconstr = list(A = coh.cMat, e = coh.e, values = coh.values)))
   }
+  
+  ## spatial & spatio-temporal ----
   
   if (is.spatial) {
     message("\n Spatial effect(s):               ",
             "\n  Structured:                 bym2",
             "\n  Interaction type:              ", type.st,
             appendLF = FALSE)
+    
+    ### spatial ----
+    
     formula <- 
       update(formula, ~. +
                f(space_id, graph = Amat, model = 'bym2', hyper= hyper_pc_space, scale.model = TRUE, adjust.for.con.comp = TRUE))
     
     
-    # space-time interaction
-    ## defining precision and constraint matrices
-    ## order matters here! In our data set, the time ordering take precedent over the space ordering
-    ## so we must have the time Q on the left and space Q on the right in kronecker products
+    ### spatio-temporal ----
+    
+    inla.rw <- utils::getFromNamespace('inla.rw', 'INLA')
+    order.rw <- 2
+    
     if (type.st == 1) {
+      
       # kronecker product for the Type I Interaction
       ## IID x IID
       formula <- update(formula, ~. + f(spaceTime_id, model="iid", hyper = hyper_pc_spaceTime))
+      
     } else {
       
       if (type.st == 2) {
-        # kronecker product for the Type II Interaction
-        ## RW2 x IID
-        Q_spaceTime <- Q_timeStruc %x% Q_spaceUnstruc
+        # unstructured space x structured time
+        Q.space <- diag(R)
+        Q.time <- inla.rw(n = P, order = order.rw, scale.model = TRUE, sparse = TRUE)
+        # constraint
+        A1 <- kronecker(matrix(data = 1, nrow = 1, ncol = P), Matrix::Diagonal(R))
+        A.constr <- A1[-1, ] %>% as.matrix()
+        # rank
+        full.rank <- (R)*(P)
+        rank <- (R)*(P - order.rw)
+        rank.def <- full.rank - rank
       } else if (type.st == 3) {
-        # kronecker product for the Type III Interaction
-        ## IID x ICAR
-        Q_spaceTime <- Q_timeUnstruc %x% Q_spaceStruc
+        # structured space x unstructured time
+        Q.space <- precision.icar(Amat)
+        Q.time <- diag(P)
+        # constraint
+        A1 <- kronecker(Matrix::Diagonal(P), matrix(data = 1, nrow = 1, ncol = R))
+        A.constr <- A1[-1, ] %>% as.matrix()
+        # rank
+        full.rank <- (R)*(P)
+        rank <- (R - 1)*(P)
+        rank.def <- full.rank - rank
       } else {
-        # kronecker product for the Type IV Interaction
-        ## RW2 x ICAR
-        Q_spaceTime <- Q_timeStruc %x% Q_spaceStruc
+        # structured space x structured time
+        Q.space <- precision.icar(Amat)
+        Q.time <- inla.rw(n = P, order = order.rw, scale.model = TRUE, sparse = TRUE)
+        # constraint
+        A1 <- kronecker(matrix(data = 1, nrow = 1, ncol = P), Matrix::Diagonal(R))
+        A2 <- kronecker(Matrix::Diagonal(P), matrix(data = 1, nrow = 1, ncol = R))
+        A.constr <- rbind(A1[-1, ], A2[-1, ]) %>% as.matrix()
+        # rank
+        full.rank <- (R)*(P)
+        rank <- (R - 1)*(P - order.rw)
+        rank.def <- full.rank - rank
       }
       
-      # constraints for space-time term
-      ## sum to zero constraints for identifiability
-      ## rank def is due to 0 eigenvalues
-      ## define constraint matrix from the eigenvectors relating to zero eigenvalues
-      ## rank def is the number of 0 eigenvalues
-      eigenQ <- eigen(Q_spaceTime)
-      ids <- which(eigenQ$values < 1e-10)
-      cMat <- t(eigenQ$vectors[,ids])
+      Q_spaceTime <- kronecker(Q.time, Q.space)
       
-      # # check the dimensions line up correctly
-      # R*(P-2) + nrow(cMat) == nrow(Q_spaceTime) # Type II
-      # (R-1)*P + nrow(cMat) == nrow(Q_spaceTime) # Type III
-      # (R-1)*(P-2) + nrow(cMat) == nrow(Q_spaceTime) # Type IV
-      
-      # add spatio-temporal term to formula
       formula <- update(formula, ~. +
                           f(spaceTime_id,
                             model = "generic0",
                             Cmatrix = Q_spaceTime,
-                            extraconstr = list(A = cMat, e = rep(0, nrow(cMat))),
-                            rankdef = nrow(cMat),
+                            rankdef = rank.def,
+                            constr = TRUE,
+                            extraconstr = list(A = A.constr, e = rep(0, nrow(A.constr))),
                             hyper = hyper_pc_spaceTime))
-    } 
+      
+    }
+    
   }
+  
+  ## cluster (if binomial) ----
   
   # cluster random effect for binomial model
   if (family == 'binomial') {
     message("\n  cluster:                     iid", appendLF = FALSE)
     formula <- update(formula, ~. +  f(cluster_id, model = 'iid', hyper = hyper_pc_time))
   }
+  
+  ## stratification ----
   
   # sorting out the fixed effects
   ## urban/rural strata
@@ -291,9 +360,11 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
   } else {
     message("\n  Stratified:                   no", appendLF = FALSE)
     message("\n  Global intercept:            yes", appendLF = FALSE)
-    data2$strata <- as.factor('All')
-    data2$strata_id <- data2$strata_id <- 1
+    data3$strata <- as.factor('All')
+    data3$strata_id <- data3$strata_id <- 1
   }
+  
+  # model fit ----
   
   message("\nFitting model...",
           appendLF = FALSE)
@@ -332,6 +403,8 @@ smoothAPC <- function(data, admin.level, Amat = NULL,
   message("\n Time take to fit model(s):     ", endClock[3] %>% as.numeric %>% round(),
           "\n----------------------------------",
           appendLF = FALSE)
+  
+  # output ----
   
   priors <- list(pc.u = pc.u, pc.alpha = pc.alpha, pc.u.phi = pc.u.phi, 
                  pc.alpha.phi = pc.alpha.phi, 
@@ -740,7 +813,7 @@ plotTheme<-function(...){
         panel.background=element_blank(),
         axis.line=element_line(colour='black'),
         # legend.title=element_blank(),
-        legend.text.align=0,
+        legend.text = ggplot2::element_text(hjust = 0),
         legend.key=element_rect(fill=NA),
         ...)
 }
@@ -753,10 +826,804 @@ mapTheme <- function(...){
                  axis.title.y = ggplot2::element_blank(),
                  axis.text.y = ggplot2::element_blank(),
                  axis.ticks.y = ggplot2::element_blank(),
-                 legend.text.align=0,
+                 legend.text = ggplot2::element_text(hjust = 0),
                  legend.key=element_rect(fill=NA),
                  panel.background=element_blank(),
                  panel.grid.major = ggplot2::element_blank(),
                  panel.grid.minor = ggplot2::element_blank(),
                  ...)
 }
+
+# APC model
+smoothAPC <- function(data, admin.level, Amat = NULL, 
+                      age.group = c("0", "1-11", "12-23", "24-35", "36-47", "48-59"), 
+                      year.label, stratified = FALSE, 
+                      mod = c('apc', 'ac', 'ap', 'pc', 'a', 'p', 'c')[1], slope.drop = NULL, 
+                      family = c('betabinomial', 'binomial')[1],
+                      pc.u = 1, pc.alpha = 0.01, pc.u.phi = 0.5, pc.alpha.phi = 2/3,
+                      overdisp.mean = 0, overdisp.prec = 0.4, 
+                      type.st = 4, pc.st.u = NA, pc.st.alpha = NA,
+                      control.inla = list(strategy = 'adaptive', int.strategy = 'auto'),
+                      inla.mode = c('classic', 'twostage', 'experimental')[3],
+                      control.compute = list(config = TRUE), verbose = FALSE, ...){
+  
+  # inputs (for testing) ----
+  
+  # data = births.2014
+  # admin.level = 'Admin1'
+  # Amat = admin1.mat
+  # age.groups = c("0", "1-11", "12-23", "24-35", "36-47", "48-59")
+  # year.label = c(beg.year:end.proj.year)
+  # mod = 'apc'
+  # slope.drop = 'c'
+  # stratified = TRUE
+  # family = c('betabinomial', 'binomial')[1]
+  # pc.u = 1
+  # pc.alpha = 0.01
+  # pc.u.phi = 0.5
+  # pc.alpha.phi = 2/3
+  # overdisp.mean = -7.5
+  # overdisp.prec = 0.39
+  # type.st = 4
+  # pc.st.u = NA
+  # pc.st.alpha = NA
+  # control.inla = list(strategy = 'adaptive', int.strategy = 'auto')
+  # inla.mode = c('classic', 'twostage', 'experimental')[3]
+  # control.compute = list(config = TRUE)
+  # verbose = FALSE
+  
+  # check inputs ----
+  
+  if(!(admin.level %in% c('National','Admin1','Admin2'))){
+    stop('Enter a valid admin level (National, Admin1, or Admin2)')
+  }
+  if((admin.level!='National') == (is.null(Amat) == T)){
+    stop('Admin level and adjacency matrix are not compatible')}
+  if(!"config" %in% names(control.compute)){
+    message("config = TRUE is added to control.compute so that posterior draws can be taken.")
+    control.compute$config <- TRUE
+  }
+  if(mod == 'apc' && is.null(slope.drop)){
+    stop('Warning: When fitting an APC model need to drop linear column of one of age, period or cohort.')
+  }
+  if(mod == 'apc' &&! (slope.drop %in% c('a', 'p', 'c'))){
+    stop('slope.drop needs to be one of a, p or c')
+  }
+  if (!is.null(Amat)) {
+    if (is.null(rownames(Amat))) {
+      stop('Row names of Amat needs to be specified to region names.')
+    }
+    if (is.null(colnames(Amat))) {
+      stop('Column names of Amat needs to be specified to region names.')
+    }
+    if (sum(rownames(Amat) != colnames(Amat)) > 0) {
+      stop('Row and column names of Amat needs to be the same.')
+    }
+    is.spatial <- TRUE
+  } else {
+    Amat <- matrix(1, 1, 1)
+    colnames(Amat) <- rownames(Amat) <- "All"
+    is.spatial <- FALSE
+  }
+  
+  # set admin-level parameters ----
+  
+  if(admin.level == 'National'){
+    data$region <- "All"
+  }else if(admin.level == 'Admin1'){
+    data$region <- data$admin1.char
+  }else if(admin.level == 'Admin2'){
+    data$region <- data$admin2.char
+  }
+  
+  # data oragnisation ----
+  
+  ## correct temporal specification ----
+  
+  # age + period + cohort
+  data2a <- 
+    expand.grid(ageMonth = 0:59,
+                periodMonth = (12*(year.label[1] - 1900) + 1):(12*(year.label[length(year.label)] - 1900) + 12)) %>% 
+    dplyr::mutate(cohortMonth = periodMonth - ageMonth,
+                  age = dplyr::case_when(ageMonth == 0 ~ 0,
+                                         ageMonth %in% 1:11 ~ 6,
+                                         ageMonth %in% 12:23 ~ 17.5,
+                                         ageMonth %in% 24:35 ~ 29.5,
+                                         ageMonth %in% 36:47 ~ 41.5,
+                                         TRUE ~ 53.5),
+                  period = floor((periodMonth-1)/12)+1900,
+                  cohort= floor((cohortMonth-1)/12)+1900,
+                  age_id = age,
+                  period_id = period %>% factor() %>% as.numeric(),
+                  cohort_id = cohort %>% factor() %>% as.numeric()) %>% 
+    dplyr::select(-tidyr::ends_with('Month')) %>% 
+    dplyr::distinct()
+  A <- data2a$age %>% unique() %>% length()
+  P<- data2a$period %>% unique() %>% length()
+  C <- data2a$cohort %>% unique() %>% length()
+  
+  ## correct spatial specification ----
+  
+  R <- nrow(Amat)
+  data2b <- data.frame(space = rownames(Amat), space_id = 1:R)
+  
+  ## correct spatio-temporal specification ----
+  
+  ### space + age + period + cohort
+  data2c <- 
+    dplyr::cross_join(data2a, data2b) %>% 
+    dplyr::mutate(spaceTime = interaction(space, period),
+                  spaceTime_id = interaction(space_id, period_id) %>% as.numeric()) %>% 
+    dplyr::relocate(c('space', 'spaceTime'), .before = age_id)
+  
+  ## finalised data ----
+  
+  data3 <- 
+    data  %>%
+    # labels for INLA modelling
+    dplyr::mutate(
+      # new terms
+      age = dplyr::case_when(age == '0' ~ 0,
+                             age == '1-11' ~ 6,
+                             age == '12-23' ~ 17.5,
+                             age == '24-35' ~ 29.5,
+                             age == '36-47' ~ 41.5,
+                             TRUE ~ 53.5),
+      period = years,
+      space = region,
+      strata = urban) %>% 
+    # join with the full range of space and time
+    dplyr::left_join(., data2c, by = c('age', 'period', 'cohort', 'space')) %>% 
+    dplyr::mutate(
+      # final id terms for inla
+      cluster_id = cluster %>% as.factor() %>% as.numeric(),
+      strata_id = strata %>% factor(., levels = c('rural', 'urban')), # want this to be a factor in the model as we stratify by it
+      age2_id = age_id, 
+      period2_id = period_id, 
+      cohort2_id = cohort_id)
+  
+  # priors ----
+  
+  # pc hyper priors
+  ## temproal
+  hyper_pc_time <- list(prec = list(prior = 'pc.prec', param = c(pc.u, pc.alpha)))
+  ## spatial
+  hyper_pc_space <- list(prec = list(prior = 'pc.prec', param = c(pc.u, pc.alpha)), phi = list(prior = 'pc', param = c(pc.u.phi, pc.alpha.phi)))
+  ## spatio-temproal
+  pc.st.u <- ifelse(is.na(pc.st.u), pc.u, pc.st.u)
+  pc.st.alpha <- ifelse(is.na(pc.st.alpha), pc.alpha, pc.st.alpha)
+  hyper_pc_spaceTime <- list(prec = list(prior = "pc.prec", param = c(pc.st.u, pc.st.alpha)))
+  
+  # formula ----
+  
+  ## temporal (APC) ----
+  
+  ### temporal constraints ----
+  
+  # age
+  age.values <- data3$age_id %>% unique() %>% sort()
+  age.rank.def <- 2
+  age.cMat <- rbind(1, age.values) 
+  age.e <- rep(0, times = age.rank.def)
+  # period
+  per.values <- data3$period_id %>% unique() %>% sort()
+  per.rank.def <- 2
+  per.cMat <- rbind(1, per.values) 
+  per.e <- rep(0, times = per.rank.def)
+  # cohort
+  coh.values <- data3$cohort_id %>% unique() %>% sort()
+  coh.rank.def <- 2
+  coh.cMat <- rbind(1, coh.values) 
+  coh.e <- rep(0, times = coh.rank.def)
+  
+  ### APC selection
+  
+  # full temporal formula
+  formula <- 
+    Y ~ age_id + period_id + cohort_id +
+    f(age2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = age.rank.def, extraconstr = list(A = age.cMat, e = age.e, values = age.values)) +
+    f(period2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = per.rank.def, extraconstr = list(A = per.cMat, e = per.e, values = per.values)) +
+    f(cohort2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = coh.rank.def, extraconstr = list(A = coh.cMat, e = coh.e, values = coh.values))
+  
+  message("----------------------------------",
+          "\nModel Specification", 
+          "\n Temporal effect(s):               ",
+          "\n  APC type:                    ",
+          mod,
+          appendLF = FALSE)
+  # update pre and post forumla for the temporal models
+  # # do not remove any linear terms from pre fit as they are all needed later in 
+  # # re-parameterisation
+  if (mod == 'apc'){
+    message("\n  Slope dropped:                 ", slope.drop, appendLF = FALSE)
+    if(slope.drop == 'a'){
+      formula <- update(formula, ~. - age_id)
+    } else if (slope.drop == 'p'){
+      formula <- update(formula, ~. - period_id)
+    } else if (slope.drop == 'c'){
+      formula <- update(formula, ~. - cohort_id)
+    }
+  } else if (mod == 'ac'){
+    formula <- update(formula, ~.
+                      - period_id 
+                      - f(period2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = per.rank.def, extraconstr = list(A = per.cMat, e = per.e, values = per.values)))
+  } else if (mod == 'pc'){
+    formula <- update(formula, ~.
+                      - age_id 
+                      - f(age2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = age.rank.def, extraconstr = list(A = age.cMat, e = age.e, values = age.values)))
+  } else if (mod == 'ap'){
+    formula <- update(formula, ~.
+                      - cohort_id 
+                      -  f(cohort2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = coh.rank.def, extraconstr = list(A = coh.cMat, e = coh.e, values = coh.values)))
+  }
+  
+  ## spatial & spatio-temporal ----
+  
+  if (is.spatial) {
+    message("\n Spatial effect(s):               ",
+            "\n  Structured:                 bym2",
+            "\n  Interaction type:              ", type.st,
+            appendLF = FALSE)
+    
+    ### spatial ----
+    
+    formula <- 
+      update(formula, ~. +
+               f(space_id, graph = Amat, model = 'bym2', hyper= hyper_pc_space, scale.model = TRUE, adjust.for.con.comp = TRUE))
+    
+    
+    ### spatio-temporal ----
+    
+    inla.rw <- utils::getFromNamespace('inla.rw', 'INLA')
+    inla.scale.model <- utils::getFromNamespace('inla.scale.model', 'INLA')
+    
+    # precision matrices
+    ## time
+    ### unstructured
+    Q_timeUnstruc <- diag(P)
+    ### structured
+    Q_timeStruc <- inla.rw(n = P, order = 2, scale.model = TRUE, sparse = TRUE)
+    ## space
+    ### unstructured
+    Q_spaceUnstruc <- diag(R)
+    ### structured
+    Q_spaceStruc <- Amat
+    #### organise Amat into ICAR precision
+    if (sum(Q_spaceStruc > 0 & Q_spaceStruc < 1) != 0) {
+      #### if 0 < Q_{ij} < 1 then make Q_{ij} = 1
+      for (i in 1:nrow(Q_spaceStruc)) {
+        idx <- which(Q_spaceStruc[i, ] > 0 & Q_spaceStruc[i, ] < 1)
+        Q_spaceStruc[i, idx] <- 1
+      }
+    }
+    #### turn Amat into an ICAR precision
+    ##### no 0s on diagonal; main diag to be the number of neighbours in total; off diagonal to be 0 for not neighbours and -1 for neighbours
+    diag(Q_spaceStruc) <- 0
+    diag <- apply(Q_spaceStruc, 1, sum)
+    Q_spaceStruc[Q_spaceStruc != 0] <- -1
+    diag(Q_spaceStruc) <- diag
+    Q_spaceStruc <- inla.scale.model(Q_spaceStruc, list(A = matrix(1, 1, dim(Q_spaceStruc)[1]), e = 0))
+    
+    if (type.st == 1) {
+      
+      # kronecker product for the Type I Interaction
+      ## IID x IID
+      formula <- update(formula, ~. + f(spaceTime_id, model="iid", hyper = hyper_pc_spaceTime))
+      
+    } else {
+      
+      if (type.st == 2) {
+        # kronecker product for the Type II Interaction
+        ## RW2 x IID
+        Q_spaceTime <- Q_timeStruc %x% Q_spaceUnstruc
+      } else if (type.st == 3) {
+        # kronecker product for the Type III Interaction
+        ## IID x ICAR
+        Q_spaceTime <- Q_timeUnstruc %x% Q_spaceStruc
+      } else {
+        # kronecker product for the Type IV Interaction
+        ## RW2 x ICAR
+        Q_spaceTime <- Q_timeStruc %x% Q_spaceStruc
+      }
+      
+      # constraints for space-time term
+      ## sum to zero constraints for identifiability
+      ## rank def is due to 0 eigenvalues
+      ## define constraint matrix from the eigenvectors relating to zero eigenvalues
+      ## rank def is the number of 0 eigenvalues
+      eigenQ <- eigen(Q_spaceTime)
+      ids <- which(eigenQ$values < 1e-10)
+      cMat <- t(eigenQ$vectors[,ids])
+      
+      # # check the dimensions line up correctly
+      # R*(P-2) + nrow(cMat) == nrow(Q_spaceTime) # Type II
+      # (R-1)*P + nrow(cMat) == nrow(Q_spaceTime) # Type III
+      # (R-1)*(P-2) + nrow(cMat) == nrow(Q_spaceTime) # Type IV
+      
+      # add spatio-temporal term to formula
+      formula <- update(formula, ~. +
+                          f(spaceTime_id,
+                            model = "generic0",
+                            Cmatrix = Q_spaceTime,
+                            extraconstr = list(A = cMat, e = rep(0, nrow(cMat))),
+                            rankdef = nrow(cMat),
+                            hyper = hyper_pc_spaceTime))
+      
+    }
+    
+  }
+  
+  ## cluster (if binomial) ----
+  
+  # cluster random effect for binomial model
+  if (family == 'binomial') {
+    message("\n  cluster:                     iid", appendLF = FALSE)
+    formula <- update(formula, ~. +  f(cluster_id, model = 'iid', hyper = hyper_pc_time))
+  }
+  
+  ## stratification ----
+  
+  # sorting out the fixed effects
+  ## urban/rural strata
+  if(stratified){
+    message("\n  Stratified:                  yes", appendLF = FALSE)
+    message("\n  Global Intercept:             no", appendLF = FALSE)
+    # update the formula
+    formula <- update(formula, ~. - 1 + strata_id)
+  } else {
+    message("\n  Stratified:                   no", appendLF = FALSE)
+    message("\n  Global intercept:            yes", appendLF = FALSE)
+    data3$strata <- as.factor('All')
+    data3$strata_id <- data3$strata_id <- 1
+  }
+  
+  # model fit ----
+  
+  message("\nFitting model...",
+          appendLF = FALSE)
+  startClock <- proc.time() # Start the clock!
+  # the extra information depending on the model
+  if(family == 'betabinomial'){
+    control.family <- list(hyper = list(rho = list(param = c(overdisp.mean, overdisp.prec), initial = overdisp.mean)))
+    fit <-
+      INLA::inla(formula, 
+                 family = family, 
+                 data = data3, 
+                 Ntrials = data3$total,
+                 control.compute = control.compute,
+                 control.family = control.family,
+                 control.predictor = list(compute = FALSE, link = 1),
+                 control.inla = control.inla,
+                 lincomb = NULL,
+                 inla.mode = inla.mode,
+                 verbose = verbose,
+                 ...)
+  } else {
+    fit <-
+      INLA::inla(formula, 
+                 family = family, 
+                 data = data3, 
+                 Ntrials = data3$total,
+                 control.compute = control.compute,
+                 control.predictor = list(compute = FALSE, link = 1),
+                 control.inla = control.inla,
+                 lincomb = NULL,
+                 inla.mode = inla.mode,
+                 verbose = verbose,
+                 ...)
+  }
+  endClock <- proc.time() - startClock # Stop the clock
+  message("\n Time take to fit model(s):     ", endClock[3] %>% as.numeric %>% round(),
+          "\n----------------------------------",
+          appendLF = FALSE)
+  
+  # output ----
+  
+  priors <- list(pc.u = pc.u, pc.alpha = pc.alpha, pc.u.phi = pc.u.phi, 
+                 pc.alpha.phi = pc.alpha.phi, 
+                 pc.st.u = pc.st.u, 
+                 pc.st.alpha = pc.st.alpha, 
+                 overdisp.mean = overdisp.mean, overdisp.prec = overdisp.prec)
+  
+  return(list(model = formula, fit = fit, family = family, 
+              Amat = Amat, newdata = data3, type.st = type.st,
+              age.group = age.group, year.label = year.label,
+              priors = priors))
+}
+
+smoothAPC_noInteraction <- function(data, admin.level, Amat = NULL, 
+                      age.group = c("0", "1-11", "12-23", "24-35", "36-47", "48-59"), 
+                      year.label, stratified = FALSE, 
+                      mod = c('apc', 'ac', 'ap', 'pc', 'a', 'p', 'c')[1], slope.drop = NULL, 
+                      family = c('betabinomial', 'binomial')[1],
+                      pc.u = 1, pc.alpha = 0.01, pc.u.phi = 0.5, pc.alpha.phi = 2/3,
+                      overdisp.mean = 0, overdisp.prec = 0.4, 
+                      type.st = 4, pc.st.u = NA, pc.st.alpha = NA,
+                      control.inla = list(strategy = 'adaptive', int.strategy = 'auto'),
+                      inla.mode = c('classic', 'twostage', 'experimental')[3],
+                      control.compute = list(config = TRUE), verbose = FALSE, ...){
+  
+  # inputs (for testing) ----
+  
+  # data = births.2014
+  # admin.level = 'Admin1'
+  # Amat = admin1.mat
+  # age.groups = c("0", "1-11", "12-23", "24-35", "36-47", "48-59")
+  # year.label = c(beg.year:end.proj.year)
+  # mod = 'apc'
+  # slope.drop = 'c'
+  # stratified = TRUE
+  # family = c('betabinomial', 'binomial')[1]
+  # pc.u = 1
+  # pc.alpha = 0.01
+  # pc.u.phi = 0.5
+  # pc.alpha.phi = 2/3
+  # overdisp.mean = -7.5
+  # overdisp.prec = 0.39
+  # type.st = 4
+  # pc.st.u = NA
+  # pc.st.alpha = NA
+  # control.inla = list(strategy = 'adaptive', int.strategy = 'auto')
+  # inla.mode = c('classic', 'twostage', 'experimental')[3]
+  # control.compute = list(config = TRUE)
+  # verbose = FALSE
+  
+  # check inputs ----
+  
+  if(!(admin.level %in% c('National','Admin1','Admin2'))){
+    stop('Enter a valid admin level (National, Admin1, or Admin2)')
+  }
+  if((admin.level!='National') == (is.null(Amat) == T)){
+    stop('Admin level and adjacency matrix are not compatible')}
+  if(!"config" %in% names(control.compute)){
+    message("config = TRUE is added to control.compute so that posterior draws can be taken.")
+    control.compute$config <- TRUE
+  }
+  if(mod == 'apc' && is.null(slope.drop)){
+    stop('Warning: When fitting an APC model need to drop linear column of one of age, period or cohort.')
+  }
+  if(mod == 'apc' &&! (slope.drop %in% c('a', 'p', 'c'))){
+    stop('slope.drop needs to be one of a, p or c')
+  }
+  if (!is.null(Amat)) {
+    if (is.null(rownames(Amat))) {
+      stop('Row names of Amat needs to be specified to region names.')
+    }
+    if (is.null(colnames(Amat))) {
+      stop('Column names of Amat needs to be specified to region names.')
+    }
+    if (sum(rownames(Amat) != colnames(Amat)) > 0) {
+      stop('Row and column names of Amat needs to be the same.')
+    }
+    is.spatial <- TRUE
+  } else {
+    Amat <- matrix(1, 1, 1)
+    colnames(Amat) <- rownames(Amat) <- "All"
+    is.spatial <- FALSE
+  }
+  
+  # set admin-level parameters ----
+  
+  if(admin.level == 'National'){
+    data$region <- "All"
+  }else if(admin.level == 'Admin1'){
+    data$region <- data$admin1.char
+  }else if(admin.level == 'Admin2'){
+    data$region <- data$admin2.char
+  }
+  
+  # data oragnisation ----
+  
+  ## correct temporal specification ----
+  
+  # age + period + cohort
+  data2a <- 
+    expand.grid(ageMonth = 0:59,
+                periodMonth = (12*(year.label[1] - 1900) + 1):(12*(year.label[length(year.label)] - 1900) + 12)) %>% 
+    dplyr::mutate(cohortMonth = periodMonth - ageMonth,
+                  age = dplyr::case_when(ageMonth == 0 ~ 0,
+                                         ageMonth %in% 1:11 ~ 6,
+                                         ageMonth %in% 12:23 ~ 17.5,
+                                         ageMonth %in% 24:35 ~ 29.5,
+                                         ageMonth %in% 36:47 ~ 41.5,
+                                         TRUE ~ 53.5),
+                  period = floor((periodMonth-1)/12)+1900,
+                  cohort= floor((cohortMonth-1)/12)+1900,
+                  age_id = age,
+                  period_id = period %>% factor() %>% as.numeric(),
+                  cohort_id = cohort %>% factor() %>% as.numeric()) %>% 
+    dplyr::select(-tidyr::ends_with('Month')) %>% 
+    dplyr::distinct()
+  A <- data2a$age %>% unique() %>% length()
+  P<- data2a$period %>% unique() %>% length()
+  C <- data2a$cohort %>% unique() %>% length()
+  
+  ## correct spatial specification ----
+  
+  R <- nrow(Amat)
+  data2b <- data.frame(space = rownames(Amat), space_id = 1:R)
+  
+  ## correct spatio-temporal specification ----
+  
+  ### space + age + period + cohort
+  data2c <- 
+    dplyr::cross_join(data2a, data2b) %>% 
+    dplyr::mutate(spaceTime = interaction(space, period),
+                  spaceTime_id = interaction(space_id, period_id) %>% as.numeric()) %>% 
+    dplyr::relocate(c('space', 'spaceTime'), .before = age_id)
+  
+  ## finalised data ----
+  
+  data3 <- 
+    data  %>%
+    # labels for INLA modelling
+    dplyr::mutate(
+      # new terms
+      age = dplyr::case_when(age == '0' ~ 0,
+                             age == '1-11' ~ 6,
+                             age == '12-23' ~ 17.5,
+                             age == '24-35' ~ 29.5,
+                             age == '36-47' ~ 41.5,
+                             TRUE ~ 53.5),
+      period = years,
+      space = region,
+      strata = urban) %>% 
+    # join with the full range of space and time
+    dplyr::left_join(., data2c, by = c('age', 'period', 'cohort', 'space')) %>% 
+    dplyr::mutate(
+      # final id terms for inla
+      cluster_id = cluster %>% as.factor() %>% as.numeric(),
+      strata_id = strata %>% factor(., levels = c('rural', 'urban')), # want this to be a factor in the model as we stratify by it
+      age2_id = age_id, 
+      period2_id = period_id, 
+      cohort2_id = cohort_id)
+  
+  # priors ----
+  
+  # pc hyper priors
+  ## temproal
+  hyper_pc_time <- list(prec = list(prior = 'pc.prec', param = c(pc.u, pc.alpha)))
+  ## spatial
+  hyper_pc_space <- list(prec = list(prior = 'pc.prec', param = c(pc.u, pc.alpha)), phi = list(prior = 'pc', param = c(pc.u.phi, pc.alpha.phi)))
+  ## spatio-temproal
+  pc.st.u <- ifelse(is.na(pc.st.u), pc.u, pc.st.u)
+  pc.st.alpha <- ifelse(is.na(pc.st.alpha), pc.alpha, pc.st.alpha)
+  hyper_pc_spaceTime <- list(prec = list(prior = "pc.prec", param = c(pc.st.u, pc.st.alpha)))
+  
+  # formula ----
+  
+  ## temporal (APC) ----
+  
+  ### temporal constraints ----
+  
+  # age
+  age.values <- data3$age_id %>% unique() %>% sort()
+  age.rank.def <- 2
+  age.cMat <- rbind(1, age.values) 
+  age.e <- rep(0, times = age.rank.def)
+  # period
+  per.values <- data3$period_id %>% unique() %>% sort()
+  per.rank.def <- 2
+  per.cMat <- rbind(1, per.values) 
+  per.e <- rep(0, times = per.rank.def)
+  # cohort
+  coh.values <- data3$cohort_id %>% unique() %>% sort()
+  coh.rank.def <- 2
+  coh.cMat <- rbind(1, coh.values) 
+  coh.e <- rep(0, times = coh.rank.def)
+  
+  ### APC selection
+  
+  # full temporal formula
+  formula <- 
+    Y ~ age_id + period_id + cohort_id +
+    f(age2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = age.rank.def, extraconstr = list(A = age.cMat, e = age.e, values = age.values)) +
+    f(period2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = per.rank.def, extraconstr = list(A = per.cMat, e = per.e, values = per.values)) +
+    f(cohort2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = coh.rank.def, extraconstr = list(A = coh.cMat, e = coh.e, values = coh.values))
+  
+  message("----------------------------------",
+          "\nModel Specification", 
+          "\n Temporal effect(s):               ",
+          "\n  APC type:                    ",
+          mod,
+          appendLF = FALSE)
+  # update pre and post forumla for the temporal models
+  # # do not remove any linear terms from pre fit as they are all needed later in 
+  # # re-parameterisation
+  if (mod == 'apc'){
+    message("\n  Slope dropped:                 ", slope.drop, appendLF = FALSE)
+    if(slope.drop == 'a'){
+      formula <- update(formula, ~. - age_id)
+    } else if (slope.drop == 'p'){
+      formula <- update(formula, ~. - period_id)
+    } else if (slope.drop == 'c'){
+      formula <- update(formula, ~. - cohort_id)
+    }
+  } else if (mod == 'ac'){
+    formula <- update(formula, ~.
+                      - period_id 
+                      - f(period2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = per.rank.def, extraconstr = list(A = per.cMat, e = per.e, values = per.values)))
+  } else if (mod == 'pc'){
+    formula <- update(formula, ~.
+                      - age_id 
+                      - f(age2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = age.rank.def, extraconstr = list(A = age.cMat, e = age.e, values = age.values)))
+  } else if (mod == 'ap'){
+    formula <- update(formula, ~.
+                      - cohort_id 
+                      -  f(cohort2_id, model = 'rw2', hyper = hyper_pc_time, scale.model = TRUE, constr = FALSE, rankdef = coh.rank.def, extraconstr = list(A = coh.cMat, e = coh.e, values = coh.values)))
+  }
+  
+  ## spatial & spatio-temporal ----
+  
+  if (is.spatial) {
+    message("\n Spatial effect(s):               ",
+            "\n  Structured:                 bym2",
+            # "\n  Interaction type:              ", type.st,
+            appendLF = FALSE)
+    
+    ### spatial ----
+    
+    formula <- 
+      update(formula, ~. +
+               f(space_id, graph = Amat, model = 'bym2', hyper= hyper_pc_space, scale.model = TRUE, adjust.for.con.comp = TRUE))
+    
+    
+    # ### spatio-temporal ----
+    # 
+    # inla.rw <- utils::getFromNamespace('inla.rw', 'INLA')
+    # inla.scale.model <- utils::getFromNamespace('inla.scale.model', 'INLA')
+    # 
+    # # precision matrices
+    # ## time
+    # ### unstructured
+    # Q_timeUnstruc <- diag(P)
+    # ### structured
+    # Q_timeStruc <- inla.rw(n = P, order = 2, scale.model = TRUE, sparse = TRUE)
+    # ## space
+    # ### unstructured
+    # Q_spaceUnstruc <- diag(R)
+    # ### structured
+    # Q_spaceStruc <- Amat
+    # #### organise Amat into ICAR precision
+    # if (sum(Q_spaceStruc > 0 & Q_spaceStruc < 1) != 0) {
+    #   #### if 0 < Q_{ij} < 1 then make Q_{ij} = 1
+    #   for (i in 1:nrow(Q_spaceStruc)) {
+    #     idx <- which(Q_spaceStruc[i, ] > 0 & Q_spaceStruc[i, ] < 1)
+    #     Q_spaceStruc[i, idx] <- 1
+    #   }
+    # }
+    # #### turn Amat into an ICAR precision
+    # ##### no 0s on diagonal; main diag to be the number of neighbours in total; off diagonal to be 0 for not neighbours and -1 for neighbours
+    # diag(Q_spaceStruc) <- 0
+    # diag <- apply(Q_spaceStruc, 1, sum)
+    # Q_spaceStruc[Q_spaceStruc != 0] <- -1
+    # diag(Q_spaceStruc) <- diag
+    # Q_spaceStruc <- inla.scale.model(Q_spaceStruc, list(A = matrix(1, 1, dim(Q_spaceStruc)[1]), e = 0))
+    # 
+    # if (type.st == 1) {
+    #   
+    #   # kronecker product for the Type I Interaction
+    #   ## IID x IID
+    #   formula <- update(formula, ~. + f(spaceTime_id, model="iid", hyper = hyper_pc_spaceTime))
+    #   
+    # } else {
+    #   
+    #   if (type.st == 2) {
+    #     # kronecker product for the Type II Interaction
+    #     ## RW2 x IID
+    #     Q_spaceTime <- Q_timeStruc %x% Q_spaceUnstruc
+    #   } else if (type.st == 3) {
+    #     # kronecker product for the Type III Interaction
+    #     ## IID x ICAR
+    #     Q_spaceTime <- Q_timeUnstruc %x% Q_spaceStruc
+    #   } else {
+    #     # kronecker product for the Type IV Interaction
+    #     ## RW2 x ICAR
+    #     Q_spaceTime <- Q_timeStruc %x% Q_spaceStruc
+    #   }
+    #   
+    #   # constraints for space-time term
+    #   ## sum to zero constraints for identifiability
+    #   ## rank def is due to 0 eigenvalues
+    #   ## define constraint matrix from the eigenvectors relating to zero eigenvalues
+    #   ## rank def is the number of 0 eigenvalues
+    #   eigenQ <- eigen(Q_spaceTime)
+    #   ids <- which(eigenQ$values < 1e-10)
+    #   cMat <- t(eigenQ$vectors[,ids])
+    #   
+    #   # # check the dimensions line up correctly
+    #   # R*(P-2) + nrow(cMat) == nrow(Q_spaceTime) # Type II
+    #   # (R-1)*P + nrow(cMat) == nrow(Q_spaceTime) # Type III
+    #   # (R-1)*(P-2) + nrow(cMat) == nrow(Q_spaceTime) # Type IV
+    #   
+    #   # add spatio-temporal term to formula
+    #   formula <- update(formula, ~. +
+    #                       f(spaceTime_id,
+    #                         model = "generic0",
+    #                         Cmatrix = Q_spaceTime,
+    #                         extraconstr = list(A = cMat, e = rep(0, nrow(cMat))),
+    #                         rankdef = nrow(cMat),
+    #                         hyper = hyper_pc_spaceTime))
+    #   
+    # }
+    
+  }
+  
+  ## cluster (if binomial) ----
+  
+  # cluster random effect for binomial model
+  if (family == 'binomial') {
+    message("\n  cluster:                     iid", appendLF = FALSE)
+    formula <- update(formula, ~. +  f(cluster_id, model = 'iid', hyper = hyper_pc_time))
+  }
+  
+  ## stratification ----
+  
+  # sorting out the fixed effects
+  ## urban/rural strata
+  if(stratified){
+    message("\n  Stratified:                  yes", appendLF = FALSE)
+    message("\n  Global Intercept:             no", appendLF = FALSE)
+    # update the formula
+    formula <- update(formula, ~. - 1 + strata_id)
+  } else {
+    message("\n  Stratified:                   no", appendLF = FALSE)
+    message("\n  Global intercept:            yes", appendLF = FALSE)
+    data3$strata <- as.factor('All')
+    data3$strata_id <- data3$strata_id <- 1
+  }
+  
+  # model fit ----
+  
+  message("\nFitting model...",
+          appendLF = FALSE)
+  startClock <- proc.time() # Start the clock!
+  # the extra information depending on the model
+  if(family == 'betabinomial'){
+    control.family <- list(hyper = list(rho = list(param = c(overdisp.mean, overdisp.prec), initial = overdisp.mean)))
+    fit <-
+      INLA::inla(formula, 
+                 family = family, 
+                 data = data3, 
+                 Ntrials = data3$total,
+                 control.compute = control.compute,
+                 control.family = control.family,
+                 control.predictor = list(compute = FALSE, link = 1),
+                 control.inla = control.inla,
+                 lincomb = NULL,
+                 inla.mode = inla.mode,
+                 verbose = verbose,
+                 ...)
+  } else {
+    fit <-
+      INLA::inla(formula, 
+                 family = family, 
+                 data = data3, 
+                 Ntrials = data3$total,
+                 control.compute = control.compute,
+                 control.predictor = list(compute = FALSE, link = 1),
+                 control.inla = control.inla,
+                 lincomb = NULL,
+                 inla.mode = inla.mode,
+                 verbose = verbose,
+                 ...)
+  }
+  endClock <- proc.time() - startClock # Stop the clock
+  message("\n Time take to fit model(s):     ", endClock[3] %>% as.numeric %>% round(),
+          "\n----------------------------------",
+          appendLF = FALSE)
+  
+  # output ----
+  
+  priors <- list(pc.u = pc.u, pc.alpha = pc.alpha, pc.u.phi = pc.u.phi, 
+                 pc.alpha.phi = pc.alpha.phi, 
+                 pc.st.u = pc.st.u, 
+                 pc.st.alpha = pc.st.alpha, 
+                 overdisp.mean = overdisp.mean, overdisp.prec = overdisp.prec)
+  
+  return(list(model = formula, fit = fit, family = family, 
+              Amat = Amat, newdata = data3, type.st = type.st,
+              age.group = age.group, year.label = year.label,
+              priors = priors))
+}
+
