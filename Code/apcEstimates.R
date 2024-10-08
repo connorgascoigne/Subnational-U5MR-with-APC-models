@@ -1,4 +1,5 @@
 rm(list = ls())
+
 ## ENTER COUNTRY OF INTEREST -----------------------------------------------
 # Please capitalize the first letter of the country name and replace " " in the country name to "_" if there is.
 country <- 'Kenya'
@@ -10,6 +11,7 @@ library(INLA)
 library(tidyverse)
 
 ## Retrieve directories and country info -----------------------------------------------
+
 code.path <- rstudioapi::getActiveDocumentContext()$path
 code.path.splitted <- strsplit(code.path, "/")[[1]]
 
@@ -22,6 +24,7 @@ load(file = paste0(home.dir,'/Info/',info.name, sep='')) # load the country info
 source(file = paste0(home.dir, '/Code/functions.R'))
 
 ## Load admin names -----------------------------------------------
+
 setwd(data.dir)
 
 load(paste0(poly.path,'/', country, '_Amat.rda'))
@@ -65,8 +68,6 @@ if(dir.exists(paths = paste0(data.dir, '/worldpop'))){
     dplyr::select(-proportion)
   
 }
-
-
 
 ## Fit APC models  -----------------------------------------------
 
