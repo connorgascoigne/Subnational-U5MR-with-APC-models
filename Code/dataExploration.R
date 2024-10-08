@@ -106,7 +106,7 @@ adm1.yearly.urban.proportions.plot <-
                      adm1.yearly.urban.proportions.data %>% 
                      dplyr::filter(years %in% seq(from = beg.year, to = end.proj.year, length.out = 4)), 
                    aes(fill = proportion, group = interaction(years, strata)), colour = 'black') +
-  ggplot2::scale_fill_viridis_c(name = 'Strata proprtions',
+  ggplot2::scale_fill_viridis_c(name = 'Strata proportions',
                                 direction = -1, option = 'G', n.breaks = 5) + 
   ggplot2::facet_grid(strata ~ years) +
   mapTheme(text = element_text(size = text.size),
@@ -135,7 +135,7 @@ adm1.yearly.natl.proportions.plot <-
                      adm1.yearly.natl.proportions.data %>% 
                      dplyr::filter(years %in% seq(from = beg.year, to = end.proj.year, length.out = 4)), 
                    aes(fill = proportion, group = interaction(years, strata)), colour = 'black') +
-  ggplot2::scale_fill_viridis_c(name = 'Strata proprtions',
+  ggplot2::scale_fill_viridis_c(name = 'Strata proportions',
                                 direction = -1, option = 'G', n.breaks = 5) + 
   ggplot2::facet_grid(strata ~ years) +
   mapTheme(text = element_text(size = text.size),
